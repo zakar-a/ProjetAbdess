@@ -37,12 +37,44 @@ export const AppProvider = ({ children }) => {
     localStorage.setItem('marrakech_eggs_user', JSON.stringify(currentUser));
   }, [currentUser]);
 
-  // Simulate initial data loading
   useEffect(() => {
-    const timer = setTimeout(() => {
+    if (!supabase) {
       setLoading(false);
-    }, 1500);
-    return () => clearTimeout(timer);
+      return;
+    }
+
+    const fetchData = async () => {
+      try {
+        const [uRes, pRes, mRes, oRes] = await Promise.all([
+          supabase.from('users').select('*'),
+          supabase.from('products').select('*'),
+          supabase.from('magasins').select('*'),
+          supabase.from('orders').select('*').order('timestamp', { ascending: false })
+        ]);
+        
+        if (uRes.data && uRes.data.length > 0) setUsers(uRes.data);
+        if (pRes.data && pRes.data.length > 0) setProducts(pRes.data);
+        if (mRes.data && mRes.data.length > 0) setMagasins(mRes.data);
+        if (oRes.data && oRes.data.length > 0) setOrders(oRes.data);
+      } catch (err) {
+        console.error("Erreur de chargement", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+
+    const channel = supabase.channel('public:orders')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, payload => {
+        supabase.from('orders').select('*').order('timestamp', { ascending: false }).then(({data}) => {
+          if (data) setOrders(data);
+        });
+      }).subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   // Auth Functions
@@ -60,13 +92,14 @@ export const AppProvider = ({ children }) => {
   };
 
   // Stock Functions (Now Store Specific)
-  const refillStock = (magasinId, productId, amount) => {
-    setMagasins(prev => prev.map(m => 
-      m.id === magasinId 
-        ? { ...m, stock: { ...m.stock, [productId]: (m.stock[productId] || 0) + parseInt(amount) } } 
-        : m
-    ));
+  const refillStock = async (magasinId, productId, amount) => {
     const mag = magasins.find(m => m.id === magasinId);
+    if (!mag) return;
+    const newStock = { ...mag.stock, [productId]: (mag.stock[productId] || 0) + parseInt(amount) };
+    
+    setMagasins(prev => prev.map(m => m.id === magasinId ? { ...m, stock: newStock } : m));
+    if (supabase) await supabase.from('magasins').update({ stock: newStock }).eq('id', magasinId);
+
     const prod = products.find(p => p.id === productId);
     addNotification(`Stock mis à jour : +${amount} ${prod?.name} à ${mag?.name}`);
   };
@@ -98,6 +131,7 @@ export const AppProvider = ({ children }) => {
     };
 
     setOrders(prev => [newOrder, ...prev]);
+    if (supabase) supabase.from('orders').insert([newOrder]).then();
     addNotification(`Nouvelle commande de ${newOrder.clientName}: ${newOrder.total} DH`, 'order');
     return newOrder;
   };
@@ -128,11 +162,18 @@ export const AppProvider = ({ children }) => {
 
     setMagasins(prev => prev.map(m => m.id === order.magasinId ? { ...m, stock: updatedStock } : m));
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'confirmed' } : o));
+    
+    if (supabase) {
+      supabase.from('magasins').update({ stock: updatedStock }).eq('id', order.magasinId).then();
+      supabase.from('orders').update({ status: 'confirmed' }).eq('id', orderId).then();
+    }
+    
     return true;
   };
 
   const deliverOrder = (orderId) => {
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'delivered' } : o));
+    if (supabase) supabase.from('orders').update({ status: 'delivered' }).eq('id', orderId).then();
     addNotification(`Commande livrée avec succès !`, 'success');
   };
 
@@ -163,6 +204,7 @@ export const AppProvider = ({ children }) => {
     }
 
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'cancelled' } : o));
+    if (supabase) supabase.from('orders').update({ status: 'cancelled' }).eq('id', orderId).then();
     addNotification(`Commande modifiée : annulée`, 'error');
   };
 
@@ -207,45 +249,55 @@ export const AppProvider = ({ children }) => {
   };
 
   // User & Inventory management
+  // User & Inventory management
   const addUser = (userData) => {
     const newUser = { ...userData, id: 'u' + Date.now().toString().slice(-4) };
     setUsers(prev => [...prev, newUser]);
+    if (supabase) supabase.from('users').insert([newUser]).then();
     return newUser;
   };
 
   const updateUser = (userId, data) => {
     setUsers(prev => prev.map(u => u.id === userId ? { ...u, ...data } : u));
+    if (supabase) supabase.from('users').update(data).eq('id', userId).then();
     if (currentUser?.id === userId) setCurrentUser({ ...currentUser, ...data });
   };
 
   const deleteUser = (userId) => {
     setUsers(prev => prev.filter(u => u.id !== userId));
+    if (supabase) supabase.from('users').delete().eq('id', userId).then();
   };
 
   const addProduct = (prodData) => {
     const newProd = { ...prodData, id: 'c' + Date.now().toString().slice(-4) };
     setProducts(prev => [...prev, newProd]);
+    if (supabase) supabase.from('products').insert([newProd]).then();
   };
 
   const updateProduct = (prodId, data) => {
     setProducts(prev => prev.map(p => p.id === prodId ? { ...p, ...data } : p));
+    if (supabase) supabase.from('products').update(data).eq('id', prodId).then();
   };
 
   const deleteProduct = (prodId) => {
     setProducts(prev => prev.filter(p => p.id !== prodId));
+    if (supabase) supabase.from('products').delete().eq('id', prodId).then();
   };
 
   const addMagasin = (magData) => {
     const newMag = { ...magData, id: 'm' + Date.now().toString().slice(-4), stock: {}, customPrices: {}, alertThreshold: 30, activeProducts: magData.activeProducts || [] };
     setMagasins(prev => [...prev, newMag]);
+    if (supabase) supabase.from('magasins').insert([newMag]).then();
   };
 
   const updateMagasin = (magId, data) => {
     setMagasins(prev => prev.map(m => m.id === magId ? { ...m, ...data } : m));
+    if (supabase) supabase.from('magasins').update(data).eq('id', magId).then();
   };
 
   const deleteMagasin = (magId) => {
     setMagasins(prev => prev.filter(m => m.id !== magId));
+    if (supabase) supabase.from('magasins').delete().eq('id', magId).then();
   };
 
   return (
