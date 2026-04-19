@@ -13,15 +13,21 @@ import {
   Store,
   Users,
   User,
-  BarChart2
+  BarChart2,
+  FileText,
+  Download,
+  ArrowLeft
 } from 'lucide-react';
+import InvoiceTemplate from '../components/InvoiceTemplate';
 
 const PatronDashboard = () => {
   const { products, orders, getStats, confirmOrder, cancelOrder, magasins, users } = useAppContext();
   const [filter, setFilter] = useState('day');
+  const [showInvoice, setShowInvoice] = useState(null);
 
   const stats = getStats(filter);
   const pendingOrders = orders.filter(o => o.status === 'pending');
+  const historicalOrders = orders.filter(o => o.status !== 'pending');
 
   const now = new Date();
   let filteredOrders = orders.filter(o => o.status !== 'cancelled');
@@ -59,27 +65,90 @@ const PatronDashboard = () => {
   });
   const maxStock = Math.max(...globalStock.map(s => s.total), 1);
 
+  const exportToExcel = () => {
+    // Basic CSV generation
+    const headers = ["ID Commande", "Date/Heure", "Point de Vente", "Client", "Vendeur", "Statut", "Total (DH)"];
+    
+    const rows = filteredOrders.map(o => {
+      const vendeur = users.find(u => u.id === o.vendeurId)?.name || 'N/A';
+      const date = new Date(o.timestamp).toLocaleString();
+      return [
+        o.id,
+        `"${date}"`,
+        `"${o.magasinName}"`,
+        `"${o.clientName}"`,
+        `"${vendeur}"`,
+        o.status,
+        o.total
+      ].join(",");
+    });
+
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `ventes_marrakech_eggs_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  if (showInvoice) {
+    return (
+      <div className="animate-in">
+        <button className="btn btn-outline" style={{ marginBottom: '1rem' }} onClick={() => setShowInvoice(null)}>
+          <ArrowLeft size={16} /> Retour au tableau de bord
+        </button>
+        <div style={{ background: 'white', borderRadius: '12px', overflow: 'hidden', boxShadow: '0 20px 50px rgba(0,0,0,0.3)', position: 'relative' }}>
+          <InvoiceTemplate order={showInvoice} />
+        </div>
+        <button className="btn btn-primary" style={{ marginTop: '1.5rem' }} onClick={() => window.print()}>
+          Télécharger / Imprimer la facture
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="animate-in">
       {/* Quick Stats - Premium Activity Synthesis */}
       <div style={{ marginBottom: '2rem' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
           <h2 style={{ fontSize: '1.2rem' }}>Synthèse de l'Activité Global</h2>
-          <select 
-            value={filter} 
-            onChange={(e) => setFilter(e.target.value)}
-            style={{ 
-              background: 'var(--surface-color)', 
-              color: 'white', 
-              border: '1px solid var(--surface-border)',
-              padding: '6px 14px',
-              borderRadius: '10px',
-              fontSize: '0.8rem'
-            }}
-          >
-            <option value="day">Aujourd'hui</option>
-            <option value="week">7 derniers jours</option>
-          </select>
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button 
+              onClick={exportToExcel}
+              style={{
+                background: 'rgba(255, 255, 255, 0.1)',
+                color: 'white',
+                border: '1px solid var(--surface-border)',
+                padding: '6px 14px',
+                borderRadius: '10px',
+                fontSize: '0.8rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '5px',
+                cursor: 'pointer'
+              }}
+            >
+              <Download size={14} /> Exporter Excel
+            </button>
+            <select 
+              value={filter} 
+              onChange={(e) => setFilter(e.target.value)}
+              style={{ 
+                background: 'var(--surface-color)', 
+                color: 'white', 
+                border: '1px solid var(--surface-border)',
+                padding: '6px 14px',
+                borderRadius: '10px',
+                fontSize: '0.8rem'
+              }}
+            >
+              <option value="day">Aujourd'hui</option>
+              <option value="week">7 derniers jours</option>
+            </select>
+          </div>
         </div>
 
         <div className="grid-2">
@@ -238,6 +307,47 @@ const PatronDashboard = () => {
                 >
                   <CheckCircle2 size={18} /> Valider
                 </button>
+              </div>
+            </div>
+          ))
+        )}
+      </section>
+
+      {/* Historical Orders */}
+      <section style={{ marginTop: '2.5rem' }}>
+        <h3 style={{ fontSize: '1.1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <FileText size={18} /> Historique & Factures
+        </h3>
+        {historicalOrders.length === 0 ? (
+          <div className="glass-card" style={{ textAlign: 'center', padding: '2.5rem', color: 'var(--text-muted)' }}>
+            <p>Aucune facture disponible.</p>
+          </div>
+        ) : (
+          historicalOrders.map(order => (
+            <div key={order.id} className="glass-card" style={{ marginBottom: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <p style={{ fontWeight: 700 }}>{order.clientName}</p>
+                <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginTop: '5px' }}>
+                  <span className={`badge ${order.status === 'cancelled' ? 'badge-cancelled' : 'badge-completed'}`}>
+                    {order.status === 'cancelled' ? 'Annulée' : (order.status === 'delivered' ? 'Livrée' : 'Validée')}
+                  </span>
+                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{new Date(order.timestamp).toLocaleDateString()} • #{order.id}</p>
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                <div style={{ textAlign: 'right' }}>
+                  <p style={{ fontWeight: 800, color: 'var(--primary-color)' }}>{order.total} DH</p>
+                </div>
+                {order.status !== 'cancelled' && (
+                  <button 
+                    className="btn btn-outline"
+                    style={{ padding: '8px', borderRadius: '8px' }}
+                    onClick={() => setShowInvoice(order)}
+                    title="Voir la facture"
+                  >
+                    <FileText size={18} />
+                  </button>
+                )}
               </div>
             </div>
           ))
