@@ -19,11 +19,20 @@ import {
   ArrowLeft
 } from 'lucide-react';
 import InvoiceTemplate from '../components/InvoiceTemplate';
+import MonthlyInvoiceTemplate from '../components/MonthlyInvoiceTemplate';
 
 const PatronDashboard = () => {
   const { products, orders, getStats, confirmOrder, cancelOrder, magasins, users } = useAppContext();
   const [filter, setFilter] = useState('day');
   const [showInvoice, setShowInvoice] = useState(null);
+  // Custom date range states
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  // Monthly invoice generation states
+  const [selectedClientId, setSelectedClientId] = useState('');
+  const [selectedMonth, setSelectedMonth] = useState(''); // format YYYY-MM
+  const [showMonthlyInvoice, setShowMonthlyInvoice] = useState(null); // will hold {clientId, clientName, month, year, monthOrders}
+
 
   const stats = getStats(filter);
   const pendingOrders = orders.filter(o => o.status === 'pending');
@@ -36,6 +45,13 @@ const PatronDashboard = () => {
   } else if (filter === 'week') {
     const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     filteredOrders = filteredOrders.filter(o => new Date(o.timestamp) >= oneWeekAgo);
+  } else if (filter === 'custom' && startDate && endDate) {
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    filteredOrders = filteredOrders.filter(o => {
+      const ts = new Date(o.timestamp);
+      return ts >= start && ts <= end;
+    });
   }
 
   const vendorSales = {};
@@ -66,9 +82,8 @@ const PatronDashboard = () => {
   const maxStock = Math.max(...globalStock.map(s => s.total), 1);
 
   const exportToExcel = () => {
-    // Basic CSV generation
+    // Basic CSV generation respecting current filter (including custom range)
     const headers = ["ID Commande", "Date/Heure", "Point de Vente", "Client", "Vendeur", "Statut", "Total (DH)"];
-    
     const rows = filteredOrders.map(o => {
       const vendeur = users.find(u => u.id === o.vendeurId)?.name || 'N/A';
       const date = new Date(o.timestamp).toLocaleString();
@@ -80,18 +95,32 @@ const PatronDashboard = () => {
         `"${vendeur}"`,
         o.status,
         o.total
-      ].join(",");
+      ].join(',');
     });
-
-    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows].join("\n");
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(','), ...rows].join('\n');
     const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `ventes_marrakech_eggs_${new Date().toISOString().split('T')[0]}.csv`);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `ventes_marrakech_eggs_${new Date().toISOString().split('T')[0]}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
+
+  const generateMonthlyInvoice = () => {
+    if (!selectedClientId || !selectedMonth) return;
+    const [year, monthIdx] = selectedMonth.split('-');
+    const month = parseInt(monthIdx, 10) - 1; // 0-indexed
+    const start = new Date(year, month, 1);
+    const end = new Date(year, month + 1, 0, 23, 59, 59, 999);
+    const monthOrders = orders.filter(o =>
+      o.clientId === selectedClientId &&
+      new Date(o.timestamp) >= start && new Date(o.timestamp) <= end
+    );
+    const client = users.find(u => u.id === selectedClientId);
+    setShowMonthlyInvoice({ clientId: selectedClientId, clientName: client?.name || 'Client', month: parseInt(monthIdx, 10) - 1, year: parseInt(year, 10), monthOrders });
+  };
+
 
   if (showInvoice) {
     return (
@@ -104,6 +133,22 @@ const PatronDashboard = () => {
         </div>
         <button className="btn btn-primary" style={{ marginTop: '1.5rem' }} onClick={() => window.print()}>
           Télécharger / Imprimer la facture
+        </button>
+      </div>
+    );
+  }
+
+  if (showMonthlyInvoice) {
+    return (
+      <div className="animate-in">
+        <button className="btn btn-outline" style={{ marginBottom: '1rem' }} onClick={() => setShowMonthlyInvoice(null)}>
+          <ArrowLeft size={16} /> Retour au tableau de bord
+        </button>
+        <div style={{ background: 'white', borderRadius: '12px', overflow: 'hidden', boxShadow: '0 20px 50px rgba(0,0,0,0.3)', position: 'relative' }}>
+          <MonthlyInvoiceTemplate {...showMonthlyInvoice} />
+        </div>
+        <button className="btn btn-primary" style={{ marginTop: '1.5rem' }} onClick={() => window.print()}>
+          Télécharger / Imprimer le relevé mensuel
         </button>
       </div>
     );
@@ -147,9 +192,33 @@ const PatronDashboard = () => {
             >
               <option value="day">Aujourd'hui</option>
               <option value="week">7 derniers jours</option>
+              <option value="custom">Personnalisé</option>
             </select>
           </div>
         </div>
+
+        {filter === 'custom' && (
+          <div className="glass-card animate-in" style={{ padding: '15px', marginBottom: '1.5rem', display: 'flex', gap: '15px', alignItems: 'center' }}>
+            <div style={{ flex: 1 }}>
+              <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: '5px' }}>Date de début</label>
+              <input 
+                type="date" 
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                style={{ width: '100%', background: 'rgba(0,0,0,0.2)', color: 'white', border: '1px solid var(--surface-border)', padding: '8px', borderRadius: '8px' }}
+              />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: '5px' }}>Date de fin</label>
+              <input 
+                type="date" 
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                style={{ width: '100%', background: 'rgba(0,0,0,0.2)', color: 'white', border: '1px solid var(--surface-border)', padding: '8px', borderRadius: '8px' }}
+              />
+            </div>
+          </div>
+        )}
 
         <div className="grid-2">
           <div className="glass-card stat-card" style={{ borderLeft: '4px solid var(--primary-color)' }}>
@@ -253,6 +322,47 @@ const PatronDashboard = () => {
               </div>
             );
           })}
+        </div>
+      </section>
+
+      {/* Monthly Facturation Section */}
+      <section style={{ marginBottom: '2.5rem' }}>
+        <h3 style={{ fontSize: '1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <FileText size={18} /> Facturation Mensuelle Professionnelle
+        </h3>
+        <div className="glass-card" style={{ padding: '20px' }}>
+          <div className="grid-2" style={{ alignItems: 'flex-end' }}>
+            <div>
+              <label style={{ fontSize: '0.85rem', color: 'var(--text-muted)', display: 'block', marginBottom: '8px' }}>Sélectionner un Client</label>
+              <select 
+                value={selectedClientId} 
+                onChange={(e) => setSelectedClientId(e.target.value)}
+                style={{ width: '100%', background: 'rgba(0,0,0,0.2)', color: 'white', border: '1px solid var(--surface-border)', padding: '10px', borderRadius: '10px' }}
+              >
+                <option value="">-- Choisir un client --</option>
+                {users.filter(u => u.role === 'client').map(client => (
+                  <option key={client.id} value={client.id}>{client.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={{ fontSize: '0.85rem', color: 'var(--text-muted)', display: 'block', marginBottom: '8px' }}>Période (Mois)</label>
+              <input 
+                type="month" 
+                value={selectedMonth}
+                onChange={(e) => setSelectedMonth(e.target.value)}
+                style={{ width: '100%', background: 'rgba(0,0,0,0.2)', color: 'white', border: '1px solid var(--surface-border)', padding: '10px', borderRadius: '10px' }}
+              />
+            </div>
+          </div>
+          <button 
+            className="btn btn-primary" 
+            style={{ marginTop: '1.5rem', width: '100%' }}
+            onClick={generateMonthlyInvoice}
+            disabled={!selectedClientId || !selectedMonth}
+          >
+            <Plus size={18} /> Générer le Relevé Mensuel Signé
+          </button>
         </div>
       </section>
 
