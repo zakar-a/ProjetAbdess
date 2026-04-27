@@ -142,7 +142,7 @@ const InvoiceTemplate = ({ order }) => {
             zIndex: 2,
             transform: 'rotate(-5deg)'
           }}>
-            Benkirane
+            Abdelssalam
           </div>
 
           <div style={{ borderBottom: '2px solid #2C3E50', width: '200px', margin: '0 auto', position: 'relative', zIndex: 3 }}></div>
